@@ -131,7 +131,7 @@
       (caddr exp)
       (make-lambda
        (cdadr exp)
-       (caddr exp)))) ; 不支持begain（表达式序列）时，假设过程体只有一个表达式来提取（使用caddr）. 支持begain则要把过程体作为表达式的列表提取（使用cddr）
+       (caddr exp))))
 
 (define (assignment? exp)
   (tagged-list? exp 'set!))
