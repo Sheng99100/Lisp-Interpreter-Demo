@@ -14,7 +14,7 @@
                      (eval_ (oprator exp) env)
                      (list-of-values (oprands exp) env)
                      env))
-        (else (error 'bad-syntax))))
+        (else (error "bad syntax"))))
 
 (define (apply_ procedure arguments env)  
   (cond ((primitive-procedure? procedure)
@@ -180,7 +180,7 @@
         (error 'no-such-variable)
         (find-var-in-env (env-parameters env) (env-arguments env))))
   (if (eq? env '())
-      (error 'unexpect-environment)
+      (error "unexpect environment")
       (env-loop env)))
 
 (define (set-variable! var val env)
@@ -193,10 +193,10 @@
               (else
                (set-var-in-env (cdr vars) (cdr vals)))))
       (if (eq? env '())
-          (error 'no such variable)
+          (error "no such variable")
           (set-var-in-env (env-parameters env) (env-arguments env))))
   (if (eq? env '())
-      (error 'unexpect environment)
+      (error "unexpect environment")
       (env-loop env))
   'ok-set)
 
@@ -210,10 +210,10 @@
               (else
                (set-var-in-env (cdr vars) (cdr vals)))))
       (if (eq? env '())
-          (error 'no such variable)
+          (error "no such variable")
           (set-var-in-env (env-parameters env) (env-arguments env))))
   (if (eq? env '())
-      (error 'unexpect environment)
+      (error "unexpect environment")
       (env-loop env))
   'ok-define)
 
@@ -238,10 +238,10 @@
 (define the-empty-global-environment '())
 
 (define (set-up-the-global-environment)
-  (extend-env
-   primitive-procedure-names
-   primitive-procedure-bodys
-   the-empty-global-environment))
+  (let ((the-global-environment (extend-env primitive-procedure-names
+                                            primitive-procedure-bodys
+                                            the-empty-global-environment)))
+    (extend-env (list 'true 'false) (list #t #f) the-global-environment)))
 
 (define the-global-environment (set-up-the-global-environment))
 
