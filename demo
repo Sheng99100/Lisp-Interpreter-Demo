@@ -1,0 +1,261 @@
+(define (eval_ exp env)
+  (cond ((self-evalating? exp) exp)
+        ((variable? exp) (eval-variable exp env))
+        ((if? exp) (eval-if exp env))
+        ((define? exp) (eval-define exp env))
+        ((assignment? exp) (eval-set exp env))
+        ((lambda? exp)
+               (make-procedure
+                     (lambda-parameters exp)
+                     (lambda-body exp)
+                     env))
+        ((application? exp)
+               (apply_ 
+                     (eval_ (oprator exp) env)
+                     (list-of-values (oprands exp) env)
+                     env))
+        (else (error 'bad-syntax))))
+
+(define (apply_ procedure arguments env)  
+  (cond ((primitive-procedure? procedure)
+         (primitive-apply procedure arguments))
+        (compound-procedure?
+         (eval_
+          (procedure-body procedure)
+          (extend-env
+               (procedure-parameters procedure)
+               arguments
+               env)))))
+
+;--------------------------------------------------------
+(define (eval-variable exp env)
+  (lookup-variable exp env))
+
+(define (eval-define exp env)
+  (define-variable!
+    (definition-variable exp)
+    (eval_ (definition-value exp) env)
+    env))
+
+(define (eval-set exp env)
+  (set-variable!
+   (assignment-variable exp)
+   (eval_ (assignment-value exp) env)
+   env))
+
+(define (eval-if exp env)
+  (define predict (if-predict exp))
+  (define consequence (if-consequence exp))
+  (define alternative (if-alternative exp))
+  (if (true? (eval_ predict env))
+      (eval_ consequence env)
+      (eval_ alternative env)))
+
+(define (true? exp)
+  (or exp
+      (number? exp)
+      (string? exp)
+      (pair? exp)))
+
+(define apply-underlying-scheme apply)
+(define (primitive-apply primitive-procedure arguments)
+  (apply-underlying-scheme
+   (primitive-procedure-body primitive-procedure)
+   arguments))
+
+(define (list-of-values exps env)
+  (if (no-oprands? exps)
+      '()
+      (cons (eval_ (first-oprand exps) env)
+            (list-of-values (rest-oprands exps) env))))
+
+
+;--------------------------------------------------------
+(define (application? exp) (pair? exp))
+
+(define (oprator exp) (car exp))
+
+(define (oprands exp) (cdr exp))
+
+(define (no-oprands? exps) (null? exps))
+
+(define (first-oprand ops) (car ops))
+
+(define (rest-oprands ops) (cdr ops))
+
+(define (tagged-list? list tag)
+  (and (pair? list)
+       (eq? (car list) tag)))
+
+(define (self-evalating? exp)
+  (or  (number? exp) 
+       (string? exp)))
+
+(define (variable? exp)
+  (symbol? exp))
+
+(define (primitive-procedure? procedure)
+  (tagged-list? procedure 'primitive))
+
+(define (compound-procedure? procedure)
+  (tagged-list? procedure 'procedure))
+
+(define (if? exp)
+  (tagged-list? exp 'if))
+(define (if-predict exp)
+  (cadr exp))
+(define (if-consequence exp)
+  (caddr exp))
+(define (if-alternative exp)
+  (if (null? (cadddr exp))
+      #f
+      (cadddr exp)))
+
+(define (lambda? exp)
+  (tagged-list? exp 'lambda))
+(define (lambda-parameters lambda-exp)
+  (cadr lambda-exp))
+(define (lambda-body lambda-exp)
+  (caddr lambda-exp))
+(define (make-lambda parameters body)
+  (list 'lambda parameters body))
+
+(define (define? exp)
+  (tagged-list? exp 'define))
+(define (definition-variable exp)
+  (if (variable? (cadr exp))
+      (cadr exp)
+      (caadr exp)))
+(define (definition-value exp)
+  (if (variable? (cadr exp))
+      (caddr exp)
+      (make-lambda
+       (cdadr exp)
+       (caddr exp)))) ; 不支持begain（表达式序列）时，假设过程体只有一个表达式来提取（使用caddr）. 支持begain则要把过程体作为表达式的列表提取（使用cddr）
+
+(define (assignment? exp)
+  (tagged-list? exp 'set!))
+(define (assignment-variable exp)
+  (cadr exp))
+(define (assignment-value exp)
+  (caddr exp))
+
+
+
+;---------------------------------------------------
+(define (primitive-procedure-body primitive-procedure)
+  (cadr primitive-procedure))
+
+(define (make-procedure parameters body env)
+  (list 'procedure parameters body env))
+(define (procedure-parameters procedure)
+  (cadr procedure))
+(define (procedure-body procedure)
+  (caddr procedure))
+(define (procedure-env)
+  (cadddr procedure))
+
+(define empty-env '())
+(define (extend-env parameters arguments base-env)
+  (list (cons parameters arguments) base-env))
+(define (env-parameters env) (caar env))
+(define (env-arguments env) (cdar env))
+(define (enclosing-env env) (cadr env))
+(define (add-binding-to-env! var val env)
+  (define new-parameters (cons var (env-parameters env)))
+  (define new-arguments  (cons val (env-arguments env)))
+  (set-car! env (cons new-parameters new-arguments)))
+
+
+(define (lookup-variable var env)
+  (define (env-loop env)
+    (define (find-var-in-env vars vals)
+      (cond ((eq? vars '())
+             (env-loop (enclosing-env env)))
+            ((eq? var (car vars))
+             (car vals))
+            (else
+             (find-var-in-env (cdr vars) (cdr vals)))))
+    (if (eq? env '())
+        (error 'no-such-variable)
+        (find-var-in-env (env-parameters env) (env-arguments env))))
+  (if (eq? env '())
+      (error 'unexpect-environment)
+      (env-loop env)))
+
+(define (set-variable! var val env)
+    (define (env-loop env)
+      (define (set-var-in-env vars vals)
+        (cond ((eq? vars '())
+               (env-loop (enclosing-env env)))
+              ((eq? var (car vars))
+               (set-car! vals val))
+              (else
+               (set-var-in-env (cdr vars) (cdr vals)))))
+      (if (eq? env '())
+          (error 'no such variable)
+          (set-var-in-env (env-parameters env) (env-arguments env))))
+  (if (eq? env '())
+      (error 'unexpect environment)
+      (env-loop env))
+  'ok-set)
+
+(define (define-variable! var val env)
+    (define (env-loop env)
+      (define (set-var-in-env vars vals)
+        (cond ((eq? vars '())
+               (add-binding-to-env! var val env))
+              ((eq? var (car vars))
+               (set-car! vals val))
+              (else
+               (set-var-in-env (cdr vars) (cdr vals)))))
+      (if (eq? env '())
+          (error 'no such variable)
+          (set-var-in-env (env-parameters env) (env-arguments env))))
+  (if (eq? env '())
+      (error 'unexpect environment)
+      (env-loop env))
+  'ok-define)
+
+;----------------------------------------------------------
+(define primitive-procedures
+  (list (list '+ +)
+        (list '- -)
+        (list '* *)
+        (list '/ /)
+        (list '< <)
+        (list '> >)
+        (list 'car car)
+        (list 'cdr cdr)
+        (list 'cons cons)))
+
+(define primitive-procedure-names
+  (map car primitive-procedures))
+
+(define primitive-procedure-bodys
+  (map (lambda (proc) (list 'primitive (cadr proc))) primitive-procedures)) 
+  
+(define the-empty-global-environment '())
+
+(define (set-up-the-global-environment)
+  (extend-env
+   primitive-procedure-names
+   primitive-procedure-bodys
+   the-empty-global-environment))
+
+(define the-global-environment (set-up-the-global-environment))
+
+(define (driver-loop)
+  (let ((exp (read)))
+    (user-print (eval_ exp the-global-environment))
+    (driver-loop)))
+
+(define (user-print val)
+  (if (compound-procedure? val)
+      (display (list 'compound-procedure
+                     (procedure-parameters val)
+                     (procedure-body val)
+                     '<procedure-env>))
+      (display val)))
+
+(driver-loop)
