@@ -5,27 +5,52 @@
         ((define? exp) (eval-define exp env))
         ((assignment? exp) (eval-set exp env))
         ((lambda? exp)
-               (make-procedure
-                     (lambda-parameters exp)
-                     (lambda-body exp)
-                     env))
+         (make-procedure
+          (lambda-parameters exp)
+          (lambda-body exp)
+          env))
         ((application? exp)
-               (apply_ 
-                     (eval_ (oprator exp) env)
-                     (list-of-values (oprands exp) env)
-                     env))
+         (apply_ 
+          (eval_ (oprator exp) env)
+          (list-of-values (oprands exp) env)
+          env))
         (else (error "bad syntax"))))
 
-(define (apply_ procedure arguments env)  
+; eval一个过程所依赖的环境（过程调用创建的环境"调用环境"）, 是由这个过程的实参，和这个过程的定义所在的环境构成的。
+; 过程的实参在eval该过程前先eval出
+; 过程定义所在的环境包含在procedure的数据结构内，会被反复的使用：在创建调用环境时被作为外围环境。
+
+; 而且，过程的定义所在的环境也是由别的过程apply所形成的，除了最后的全局环境。
+; 一个环境对于创建它的过程A来说，属于在apply时创建的、在eval时使用的“调用环境”。对于在过程A的body内define出的过程来说，A的调用环境就属于A内部过程的“定义所在的环境”。在全局环境中define出的过程的定义环境，就是全局环境。
+
+; 所以，任意过程 P 的“定义环境” 被包含在每次 P 被调用而创建“调用环境”中作为外围环境。
+; 每次对 P 的“定义环境”的修改在下一次调用 P 时必须仍然有效
+; 所以必须保证：取得过程P的数据结构中的env，将其传入eval-set修改后。效果必须在过程P数据结构中的env生效。而不是类似只修改了“传入的副本”的行为。
+; 而这是由基本的 Lisp 解释器保证的。
+
+; 发现，用于解释相同的语言的两个解释器，更高层次的解释器根本无需实现被实现语言的“传值”、“返回值”等机制。
+; 根据“环境模型”的抽象，就能实现完全一样的过程调用语言。
+; 为什么？
+; “环境模型”解释了在不同的上下文中，变量对应到哪一个值的问题。
+; 求出值并且拿来逐层“替换”、“具体化”规则的操作，被“元”语言在eval，apply的循环中隐含的描述出来了。
+
+; 使用"元"语言描述语言“替换”、“具体化”方式，如 (apply (eval_ (oprator exp) env) ...).
+; 建立在实现该语言的语言，即"元"语言的复合功能之上。
+
+; 关键在于, 要探究语言最终到底是如何"替换"的，不能停留在本身就具备这些"隐含"意义的语言上。
+; 必须下降到不需要依靠这些意义来表达的规则模型和描述这个模型的语言上。即机器模型和机器语言。
+ 
+
+(define (apply_ procedure arguments)  
   (cond ((primitive-procedure? procedure)
          (primitive-apply procedure arguments))
         (compound-procedure?
          (eval_
           (procedure-body procedure)
           (extend-env
-               (procedure-parameters procedure)
-               arguments
-               env)))))
+           (procedure-parameters procedure)
+           arguments
+           (procedure-env procedure))))))
 
 ;--------------------------------------------------------
 (define (eval-variable exp env)
@@ -131,7 +156,7 @@
       (caddr exp)
       (make-lambda
        (cdadr exp)
-       (caddr exp))))
+       (caddr exp)))) ; 不支持begain（表达式序列）时，假设过程体只有一个表达式来提取（使用caddr）. 支持begain则要把过程体作为表达式的列表提取（使用cddr）
 
 (define (assignment? exp)
   (tagged-list? exp 'set!))
@@ -152,12 +177,12 @@
   (cadr procedure))
 (define (procedure-body procedure)
   (caddr procedure))
-(define (procedure-env)
+(define (procedure-env procedure)
   (cadddr procedure))
 
 (define empty-env '())
 (define (extend-env parameters arguments base-env)
-  (list (cons parameters arguments) base-env))
+  (list (cons parameters arguments) base-env)) ; (cons parameters arguments) 即 "Frame" 的序列
 (define (env-parameters env) (caar env))
 (define (env-arguments env) (cdar env))
 (define (enclosing-env env) (cadr env))
@@ -184,34 +209,34 @@
       (env-loop env)))
 
 (define (set-variable! var val env)
-    (define (env-loop env)
-      (define (set-var-in-env vars vals)
-        (cond ((eq? vars '())
-               (env-loop (enclosing-env env)))
-              ((eq? var (car vars))
-               (set-car! vals val))
-              (else
-               (set-var-in-env (cdr vars) (cdr vals)))))
-      (if (eq? env '())
-          (error "no such variable")
-          (set-var-in-env (env-parameters env) (env-arguments env))))
+  (define (env-loop env)
+    (define (set-var-in-env vars vals)
+      (cond ((eq? vars '())
+             (env-loop (enclosing-env env)))
+            ((eq? var (car vars))
+             (set-car! vals val)) ; 所有 find-var-in-env 调用的外层框架都是同一个。
+            (else
+             (set-var-in-env (cdr vars) (cdr vals)))))
+    (if (eq? env '())
+        (error "no such variable")
+        (set-var-in-env (env-parameters env) (env-arguments env))))
   (if (eq? env '())
       (error "unexpect environment")
       (env-loop env))
   'ok-set)
 
 (define (define-variable! var val env)
-    (define (env-loop env)
-      (define (set-var-in-env vars vals)
-        (cond ((eq? vars '())
-               (add-binding-to-env! var val env))
-              ((eq? var (car vars))
-               (set-car! vals val))
-              (else
-               (set-var-in-env (cdr vars) (cdr vals)))))
-      (if (eq? env '())
-          (error "no such variable")
-          (set-var-in-env (env-parameters env) (env-arguments env))))
+  (define (env-loop env)
+    (define (set-var-in-env vars vals)
+      (cond ((eq? vars '())
+             (add-binding-to-env! var val env))
+            ((eq? var (car vars))
+             (set-car! vals val))
+            (else
+             (set-var-in-env (cdr vars) (cdr vals)))))
+    (if (eq? env '())
+        (error "no such variable")
+        (set-var-in-env (env-parameters env) (env-arguments env))))
   (if (eq? env '())
       (error "unexpect environment")
       (env-loop env))
