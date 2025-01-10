@@ -12,8 +12,7 @@
         ((application? exp)
          (apply_ 
           (eval_ (oprator exp) env)
-          (list-of-values (oprands exp) env)
-          env))
+          (list-of-values (oprands exp) env)))
         (else (error "bad syntax"))))
 
 ; eval一个过程所依赖的环境（过程调用创建的环境"调用环境"）, 是由这个过程的实参，和这个过程的定义所在的环境构成的。
